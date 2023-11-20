@@ -19,8 +19,7 @@ class GenericPlugin(EmptyPlugin):
 
     def transform_input_data(self, data, source_name):
         """Transform input data into table suitable for creating query"""
-
-        data = data.reset_index(drop=True)
+        data = data.reset_index()
 
         # Add rowid column representing id of the row in the file
         data["rowid"] = data.index + 1
