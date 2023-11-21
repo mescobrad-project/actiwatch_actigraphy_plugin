@@ -19,6 +19,7 @@ class GenericPlugin(EmptyPlugin):
 
     def transform_input_data(self, data, source_name):
         """Transform input data into table suitable for creating query"""
+
         data = data.reset_index()
 
         # Add rowid column representing id of the row in the file
@@ -145,7 +146,7 @@ class GenericPlugin(EmptyPlugin):
         if 'White Light' in channels:
             light_channels['White Light'] = \
                 light_channels['White Light'].apply(lambda x: np.power(10, x) - 1)
-        extracted_data.append(light_channels)
+        extracted_data.append(round(light_channels, 2))
 
         # Extract 'Sleep/Wake'
         sleep_wake = raw.sleep_wake
@@ -160,6 +161,88 @@ class GenericPlugin(EmptyPlugin):
         final_actigraphy_data = pd.concat(data_to_upload, axis=1)
 
         return final_actigraphy_data
+
+    def extract_rpx_header_info(self, fname):
+        """Extract file header and data header"""
+
+        header = []
+
+        with open(fname, mode='rb') as file:
+            data = file.readlines()
+        for header_offset, line in enumerate(data, 1):
+            if 'Epoch-by-Epoch Data' in line.decode('utf-8'):
+                break
+            else:
+                header.append(line.decode('utf-8'))
+
+        return header
+
+    def extract_identity(self, header, identity='Identity', delimiter=','):
+        import re
+
+        for line in header:
+            if identity in line:
+                name = re.sub(r'[^\w\s]', '', line.split(delimiter)[1]).strip()
+                break
+        return name
+
+    def extract_full_name(self, header, identity='Full Name', delimiter=','):
+        import re
+
+        for line in header:
+            if identity in line:
+                name = re.sub(r'[^\w\s]', '', line.split(delimiter)[1]).strip()
+                break
+        return name
+
+    def extract_date_of_birth(self, header, date_of_birth='Date of Birth', delimiter=","):
+        import re
+        import pandas as pd
+
+        for line in header:
+            if date_of_birth in line:
+                date_of_birth = re.sub(r'[^\d./]+', '', line.split(delimiter)[1])
+                break
+        birth_date = (pd.to_datetime(date_of_birth, dayfirst=True)).strftime("%d-%m-%Y")
+        return birth_date
+
+    def generate_personal_id(self, personal_data):
+        """Based on the identity, full_name and date of birth."""
+
+        import hashlib
+
+        personal_id = "".join(str(data) for data in personal_data)
+
+        # Remove all whitespaces characters
+        personal_id = "".join(personal_id.split())
+
+        # Generate ID
+        id = hashlib.sha256(bytes(personal_id, "utf-8")).hexdigest()
+        return id
+
+    def generate_subject_personal_id(self, file):
+        """
+        Extract subject properties and based on extracted name, date of birth and
+        identity generate a unique ID.
+        """
+        # Extract header
+        header = self.extract_rpx_header_info(file)
+
+        # From header extract full name
+        full_name = self.extract_full_name(header=header)
+
+        # From header extract identity
+        identity = self.extract_identity(header=header)
+
+        # From header extract date of birth
+        date_of_birth = self.extract_date_of_birth(header=header)
+
+        # Generate personal id
+        personal_data = [full_name, date_of_birth, identity]
+        pid = self.generate_personal_id(personal_data)
+        return pid
+
+
 
     def action(self, input_meta: PluginExchangeMetadata = None) -> PluginActionResponse:
         """
@@ -200,10 +283,16 @@ class GenericPlugin(EmptyPlugin):
             for file in os.listdir(path_to_data):
                 path_to_file = os.path.join(path_to_data, file)
                 if os.path.isfile(path_to_file):
+                    # Extracting subject properties to create a PID
+                    print("Extracting subject properties ...")
+                    personal_id = self.generate_subject_personal_id(path_to_file)
 
                     # Extract data from the uploaded actigraphy
                     print("Extracting data ...")
                     actigraphy_data = self.extract_data(path_to_file)
+
+                    # Insert personal id in the extracted data
+                    actigraphy_data.insert(0, "PID", personal_id)
 
                     # Source name of the original edf file
                     source_name = os.path.basename(path_to_file)
