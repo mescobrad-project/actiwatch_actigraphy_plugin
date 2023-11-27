@@ -89,10 +89,28 @@ class GenericPlugin(EmptyPlugin):
             # upload it again
             s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__,
                             "actigraphy_data_tmp/"+os.path.basename(file_name)).delete()
-            s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
-                            ).upload_file(path_download_file,
-                                          "csv_personal_data/actigraphy_files/"
-                                          + os.path.basename(path_download_file))
+
+    def upload_data_local(self, path_to_file, personal_id):
+        """Upload file local with inserted PID in the filename"""
+
+        import boto3
+        from botocore.client import Config
+        import os
+
+        basename = os.path.basename(path_to_file)
+        file_name = f"PID_{personal_id}_{basename}"
+
+        s3_local = boto3.resource('s3',
+                                  endpoint_url=self.__OBJ_STORAGE_URL_LOCAL__,
+                                  aws_access_key_id=self.__OBJ_STORAGE_ACCESS_ID_LOCAL__,
+                                  aws_secret_access_key=self.__OBJ_STORAGE_ACCESS_SECRET_LOCAL__,
+                                  config=Config(signature_version='s3v4'),
+                                  region_name=self.__OBJ_STORAGE_REGION__)
+
+        s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
+                        ).upload_file(path_to_file,
+                                      "csv_personal_data/actigraphy_files/"+ file_name)
+
 
     def remove_tmp_actigraphy_file(self):
         import boto3
@@ -301,6 +319,7 @@ class GenericPlugin(EmptyPlugin):
                     data_transformed = self.transform_input_data(actigraphy_data,
                                                                  source_name)
                     print("Uploading data ...")
+                    self.upload_data_local(path_to_file, personal_id)
                     self.upload_data_on_trino(schema_name, table_name, data_transformed,
                                               conn)
 
