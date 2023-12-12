@@ -17,7 +17,7 @@ class GenericPlugin(EmptyPlugin):
         # Return the results
         return rows
 
-    def transform_input_data(self, data, source_name):
+    def transform_input_data(self, data, source_name, workspace_id):
         """Transform input data into table suitable for creating query"""
 
         data = data.reset_index()
@@ -28,13 +28,16 @@ class GenericPlugin(EmptyPlugin):
         # Insert source column representing name of the source file
         data.insert(0, "source", source_name)
 
-        # Transform table into table with 4 columns:
-        # source,rowid, variable_name, variable_value
+        # Transform table into table with 5 columns:
+        # source, rowid, variable_name, variable_value, workspace_id
         data = data.melt(id_vars=["source","rowid"])
         data = data.sort_values(by=['rowid'])
 
         # As a variable values type string is expected
         data = data.astype({"value":"str"})
+
+        # Add workspace id into workspace column of the table
+        data.insert(4, "workspace_id", workspace_id)
 
         return data
 
@@ -317,7 +320,8 @@ class GenericPlugin(EmptyPlugin):
 
                     # Transform data in suitable form for updating trino table
                     data_transformed = self.transform_input_data(actigraphy_data,
-                                                                 source_name)
+                                                                 source_name,
+                                                                 input_meta.workspace_id)
                     print("Uploading data ...")
                     self.upload_data_local(path_to_file, personal_id)
                     self.upload_data_on_trino(schema_name, table_name, data_transformed,
