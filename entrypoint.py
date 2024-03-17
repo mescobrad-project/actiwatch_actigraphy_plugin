@@ -93,6 +93,36 @@ class GenericPlugin(EmptyPlugin):
             s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__,
                             "actigraphy_data_tmp/"+os.path.basename(file_name)).delete()
 
+    def update_filename_pid_mapping(self, obj_name, personal_id, s3_local):
+        import csv
+        import io
+
+        folder = "file_pid/"
+        filename = "filename_pid.csv"
+        file_path = f"{folder}{filename}"
+
+        bucket_local = s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__)
+        obj_files = bucket_local.objects.filter(Prefix=folder, Delimiter="/")
+
+        if (len(list(obj_files))) > 0:
+            existing_object = s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__, file_path)
+            existing_data = existing_object.get()["Body"].read().decode('utf-8')
+            data_to_append = [obj_name, personal_id]
+            existing_rows = list(csv.reader(io.StringIO(existing_data)))
+            existing_rows.append(data_to_append)
+
+            updated_data = io.StringIO()
+            csv.writer(updated_data).writerows(existing_rows)
+            s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__).upload_fileobj(
+                io.BytesIO(updated_data.getvalue().encode('utf-8')), file_path)
+        else:
+            key_values = ['filename', 'personal_id']
+            file_data = [key_values, [obj_name, personal_id]]
+            updated_data = io.StringIO()
+            csv.writer(updated_data).writerows(file_data)
+            s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__).upload_fileobj(
+                io.BytesIO(updated_data.getvalue().encode('utf-8')), file_path)
+
     def upload_data_local(self, path_to_file, personal_id):
         """Upload file local with inserted PID in the filename"""
 
@@ -101,7 +131,7 @@ class GenericPlugin(EmptyPlugin):
         import os
 
         basename = os.path.basename(path_to_file)
-        file_name = f"PID_{personal_id}_{basename}"
+        file_name = f"actigraphy_files/{basename}"
 
         s3_local = boto3.resource('s3',
                                   endpoint_url=self.__OBJ_STORAGE_URL_LOCAL__,
@@ -111,8 +141,11 @@ class GenericPlugin(EmptyPlugin):
                                   region_name=self.__OBJ_STORAGE_REGION__)
 
         s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
-                        ).upload_file(path_to_file,
-                                      "csv_personal_data/actigraphy_files/"+ file_name)
+                        ).upload_file(path_to_file, file_name)
+
+        # Update key value file with mapping between filename nad patient id,
+        # this file is stored in the local MinIO instance
+        self.update_filename_pid_mapping(file_name, personal_id, s3_local)
 
 
     def remove_tmp_actigraphy_file(self):
