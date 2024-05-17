@@ -168,7 +168,7 @@ class GenericPlugin(EmptyPlugin):
                 s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
                                 ).objects.filter(Prefix=obj.key).delete()
 
-    def extract_data(self, file):
+    def extract_data(self, file, delimiter):
         """Extracted Epoch-by-Epoch Data from the Actiwatch data"""
 
         import pyActigraphy
@@ -178,10 +178,11 @@ class GenericPlugin(EmptyPlugin):
         extracted_data = []
 
         # Read the actiwatch file
-        raw = pyActigraphy.io.read_raw_rpx(file, drop_na=False)
+        raw = pyActigraphy.io.read_raw_rpx(file, delimiter=delimiter, drop_na=False)
 
         # Extract datetime and 'Activity' column
         data = raw.data.to_frame()
+
         extracted_data.append(data)
 
         # Extract all available light channels
@@ -234,6 +235,7 @@ class GenericPlugin(EmptyPlugin):
     def extract_identity(self, header, identity='Identity', delimiter=','):
         import re
 
+        name = ""
         for line in header:
             if identity in line:
                 name = re.sub(r'[^\w\s]', '', line.split(delimiter)[1]).strip()
@@ -243,6 +245,7 @@ class GenericPlugin(EmptyPlugin):
     def extract_full_name(self, header, identity='Full Name', delimiter=','):
         import re
 
+        name = ""
         for line in header:
             if identity in line:
                 name = re.sub(r'[^\w\s]', '', line.split(delimiter)[1]).strip()
@@ -253,11 +256,13 @@ class GenericPlugin(EmptyPlugin):
         import re
         import pandas as pd
 
+        birth_date = ""
         for line in header:
             if date_of_birth in line:
                 date_of_birth = re.sub(r'[^\d./]+', '', line.split(delimiter)[1])
                 break
-        birth_date = (pd.to_datetime(date_of_birth, dayfirst=True)).strftime("%d-%m-%Y")
+        if birth_date:
+            birth_date = (pd.to_datetime(date_of_birth, dayfirst=True)).strftime("%d-%m-%Y")
         return birth_date
 
     def generate_personal_id(self, personal_data):
@@ -274,7 +279,7 @@ class GenericPlugin(EmptyPlugin):
         id = hashlib.sha256(bytes(personal_id, "utf-8")).hexdigest()
         return id
 
-    def generate_subject_personal_id(self, file):
+    def generate_subject_personal_id(self, file, delimiter):
         """
         Extract subject properties and based on extracted name, date of birth and
         identity generate a unique ID.
@@ -283,16 +288,20 @@ class GenericPlugin(EmptyPlugin):
         header = self.extract_rpx_header_info(file)
 
         # From header extract full name
-        full_name = self.extract_full_name(header=header)
+        full_name = self.extract_full_name(header=header, delimiter=delimiter)
 
         # From header extract identity
-        identity = self.extract_identity(header=header)
+        identity = self.extract_identity(header=header, delimiter=delimiter)
 
         # From header extract date of birth
-        date_of_birth = self.extract_date_of_birth(header=header)
+        date_of_birth = self.extract_date_of_birth(header=header, delimiter=delimiter)
 
         # Generate personal id
-        personal_data = [full_name, date_of_birth, identity]
+        if full_name == "" or date_of_birth == "" or identity == "":
+            personal_data = []
+        else:
+            personal_data = [full_name, date_of_birth, identity]
+
         pid = self.generate_personal_id(personal_data)
         return pid
 
@@ -306,6 +315,7 @@ class GenericPlugin(EmptyPlugin):
         import os
         import shutil
         import pandas as pd
+        import csv
 
         from trino.dbapi import connect
         from trino.auth import BasicAuthentication
@@ -338,6 +348,13 @@ class GenericPlugin(EmptyPlugin):
             for file in os.listdir(path_to_data):
                 path_to_file = os.path.join(path_to_data, file)
                 if os.path.isfile(path_to_file):
+                    # Get the delimiter type
+                    with open(path_to_file, mode='r') as file:
+                        data = file.read(1024)
+
+                    sniffer = csv.Sniffer()
+                    delimiter = sniffer.sniff(data).delimiter
+
                     # Extracting subject properties to create a PID
                     print("Extracting subject properties ...")
                     data_info = input_meta.data_info
@@ -362,11 +379,12 @@ class GenericPlugin(EmptyPlugin):
 
                         personal_id = self.generate_personal_id(personal_data)
                     else:
-                        personal_id = self.generate_subject_personal_id(path_to_file)
+                        personal_id = self.generate_subject_personal_id(path_to_file,
+                                                                        delimiter)
 
                     # Extract data from the uploaded actigraphy
                     print("Extracting data ...")
-                    actigraphy_data = self.extract_data(path_to_file)
+                    actigraphy_data = self.extract_data(path_to_file, delimiter)
 
                     # Insert personal id in the extracted data
                     actigraphy_data.insert(0, "PID", personal_id)
@@ -378,6 +396,7 @@ class GenericPlugin(EmptyPlugin):
                     data_transformed = self.transform_input_data(actigraphy_data,
                                                                  source_name,
                                                                  input_meta.data_info["workspace_id"])
+
                     print("Uploading data ...")
                     self.upload_data_local(path_to_file, personal_id)
                     self.upload_data_on_trino(schema_name, table_name, data_transformed,
