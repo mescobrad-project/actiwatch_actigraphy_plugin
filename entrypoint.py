@@ -45,16 +45,45 @@ class GenericPlugin(EmptyPlugin):
         """Create sql statement for inserting data and update
         the table with data"""
 
-        # Iterate through pandas dataframe to extract each row values
-        data_list = []
-        for row in data.itertuples(index=False):
-            data_list.append(str(tuple(row)))
-        data_to_insert = ", ".join(data_list)
+        print(data.shape[0], "rows to insert ...")
 
-        # Insert data into the table
-        sql_statement = "INSERT INTO iceberg.{schema_name}.{table_name} VALUES {data}"\
-            .format(schema_name=schema_name, table_name=table_name, data=data_to_insert)
-        self.execute_sql_on_trino(sql=sql_statement, conn=conn)
+        batch_size = 5000
+
+        # Iterate through pandas dataframe to extract each row values
+        for start in range(0, data.shape[0], batch_size):
+            end = start + batch_size
+            batch = data.iloc[start:end]
+
+            # Create a batch insert statement
+            data_list = []
+            for row in batch.itertuples(index=False):
+                data_list.append(str(tuple(row)))
+
+            data_to_insert = ", ".join(data_list)
+
+            # Insert data into the table
+            sql_statement = "INSERT INTO iceberg.{schema_name}.{table_name} VALUES {data}"\
+                .format(schema_name=schema_name, table_name=table_name, data=data_to_insert)
+            self.execute_sql_on_trino(sql=sql_statement, conn=conn)
+
+            percent_start = int((start / data.shape[0]) *100)
+            percent_complete = int((end / data.shape[0]) * 100) if end < data.shape[0] else 100
+            if percent_complete != percent_start:
+                self.print_progress_bar(percent_complete)
+
+
+    def print_progress_bar(self, percent):
+        import sys
+        from time import sleep
+        bar_length = 50
+
+        sys.stdout.write('\r')
+        sys.stdout.write("Completed: [{:{}}] {:>3}%"
+                         .format('='*int(percent/(100.0/bar_length)),
+                                 bar_length, int(percent)))
+        sys.stdout.flush()
+        sleep(0.002)
+
 
     def download_file(self, file_path: str) -> None:
         import boto3
@@ -325,7 +354,9 @@ class GenericPlugin(EmptyPlugin):
             host=self.__TRINO_HOST__,
             port=self.__TRINO_PORT__,
             http_scheme="https",
-            auth=BasicAuthentication(self.__TRINO_USER__, self.__TRINO_PASSWORD__)
+            auth=BasicAuthentication(self.__TRINO_USER__, self.__TRINO_PASSWORD__),
+            max_attempts=1,
+            request_timeout=600
         )
 
         # Get the schema name, schema in Trino is an equivalent to a bucket in MinIO
