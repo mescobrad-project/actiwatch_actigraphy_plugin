@@ -221,24 +221,27 @@ class GenericPlugin(EmptyPlugin):
         # - Green Light,
         # - Blue Light
 
-        channels = raw.light.get_channel_list()
-        light_channels = raw.light.get_channels()
+        if raw.light is not None:
+            channels = raw.light.get_channel_list()
+            light_channels = raw.light.get_channels()
 
-        # Original data for 'White Light' are during extraction transformed with
-        # log10(x+1), perform inverse function to extract and preserve the original data
+            # Original data for 'White Light' are during extraction transformed with
+            # log10(x+1), perform inverse function to extract and preserve the original data
 
-        if 'White Light' in channels:
-            light_channels['White Light'] = \
-                light_channels['White Light'].apply(lambda x: np.power(10, x) - 1)
-        extracted_data.append(round(light_channels, 2))
+            if 'White Light' in channels:
+                light_channels['White Light'] = \
+                    light_channels['White Light'].apply(lambda x: np.power(10, x) - 1)
+            extracted_data.append(round(light_channels, 2))
 
         # Extract 'Sleep/Wake'
         sleep_wake = raw.sleep_wake
-        extracted_data.append(sleep_wake.to_frame())
+        if sleep_wake is not None:
+            extracted_data.append(sleep_wake.to_frame())
 
         # Extract 'Interval Status'
         interval_status = raw.interval_status
-        extracted_data.append(interval_status.to_frame())
+        if interval_status is not None:
+            extracted_data.append(interval_status.to_frame())
 
         data_to_upload = [df for df in extracted_data if df is not None]
 
@@ -381,7 +384,7 @@ class GenericPlugin(EmptyPlugin):
                 if os.path.isfile(path_to_file):
                     # Get the delimiter type
                     with open(path_to_file, mode='r') as file:
-                        data = file.read(1024)
+                        data = file.read(100)
 
                     sniffer = csv.Sniffer()
                     delimiter = sniffer.sniff(data).delimiter
