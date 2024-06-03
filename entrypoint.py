@@ -17,10 +17,13 @@ class GenericPlugin(EmptyPlugin):
         # Return the results
         return rows
 
-    def transform_input_data(self, data, source_name, workspace_id):
+    def transform_input_data(self, data, source_name, workspace_id, MRN):
         """Transform input data into table suitable for creating query"""
 
         data = data.reset_index()
+
+        if MRN is not None:
+            data["MRN"] = MRN
 
         # Add rowid column representing id of the row in the file
         data["rowid"] = data.index + 1
@@ -429,7 +432,8 @@ class GenericPlugin(EmptyPlugin):
                     # Transform data in suitable form for updating trino table
                     data_transformed = self.transform_input_data(actigraphy_data,
                                                                  source_name,
-                                                                 input_meta.data_info["workspace_id"])
+                                                                 input_meta.data_info["workspace_id"],
+                                                                 input_meta.data_info["MRN"])
 
                     print("Uploading data ...")
                     self.upload_data_local(path_to_file, personal_id)
