@@ -17,13 +17,17 @@ class GenericPlugin(EmptyPlugin):
         # Return the results
         return rows
 
-    def transform_input_data(self, data, source_name, workspace_id, MRN):
+    def transform_input_data(self, data, source_name, workspace_id, MRN,
+                             metadata_file_name):
         """Transform input data into table suitable for creating query"""
 
         data = data.reset_index()
 
         if MRN is not None:
             data["MRN"] = MRN
+
+        if metadata_file_name is not None:
+            data["metadata_file_name"] = metadata_file_name
 
         # Add rowid column representing id of the row in the file
         data["rowid"] = data.index + 1
@@ -340,7 +344,23 @@ class GenericPlugin(EmptyPlugin):
         pid = self.generate_personal_id(personal_data)
         return pid
 
+    def upload_metadata_file(self, metadata_file_name, metadata_content):
+        """Upload metadata files to support FAIR templates"""
+        from io import BytesIO
+        import boto3
+        from botocore.client import Config
 
+        s3_data_lake =  boto3.resource('s3',
+                                       endpoint_url=self.__OBJ_STORAGE_URL__,
+                                       aws_access_key_id=self.__OBJ_STORAGE_ACCESS_ID__,
+                                       aws_secret_access_key=self.__OBJ_STORAGE_ACCESS_SECRET__,
+                                       config=Config(signature_version='s3v4'),
+                                       region_name=self.__OBJ_STORAGE_REGION__)
+
+        obj_name_metadata = f"metadata_files/{metadata_file_name}"
+        s3_data_lake.Bucket(self.__OBJ_STORAGE_BUCKET__).upload_fileobj(
+            BytesIO(metadata_content), obj_name_metadata,
+            ExtraArgs={'ContentType': "text/json"})
 
     def action(self, input_meta: PluginExchangeMetadata = None) -> PluginActionResponse:
         """
@@ -429,16 +449,27 @@ class GenericPlugin(EmptyPlugin):
                     # Source name of the original edf file
                     source_name = os.path.basename(path_to_file)
 
+                    # Metadata file name
+                    if input_meta.data_info["metadata_json_file"] is not None:
+                        metadata_file_name = os.path.splitext(source_name)[0] + ".json"
+                    else:
+                        metadata_file_name = None
+
                     # Transform data in suitable form for updating trino table
                     data_transformed = self.transform_input_data(actigraphy_data,
                                                                  source_name,
                                                                  input_meta.data_info["workspace_id"],
-                                                                 input_meta.data_info["MRN"])
+                                                                 input_meta.data_info["MRN"],
+                                                                 metadata_file_name)
 
                     print("Uploading data ...")
                     self.upload_data_local(path_to_file, personal_id)
                     self.upload_data_on_trino(schema_name, table_name, data_transformed,
                                               conn)
+                    # Upload metadata file also
+                    if input_meta.data_info["metadata_json_file"] is not None:
+                        self.upload_metadata_file(metadata_file_name,
+                                                  input_meta.data_info["metadata_json_file"])
 
             print("Processing of the actigraphy file is finished.")
 
