@@ -21,8 +21,6 @@ class GenericPlugin(EmptyPlugin):
                              metadata_file_name):
         """Transform input data into table suitable for creating query"""
 
-        data = data.reset_index()
-
         if MRN is not None:
             data["MRN"] = MRN
 
@@ -52,7 +50,7 @@ class GenericPlugin(EmptyPlugin):
         """Create sql statement for inserting data and update
         the table with data"""
 
-        print(data.shape[0], "rows to insert ...")
+        print(data.shape[0], "rows to insert into Trino table ...")
 
         batch_size = 5000
 
@@ -72,25 +70,6 @@ class GenericPlugin(EmptyPlugin):
             sql_statement = "INSERT INTO iceberg.{schema_name}.{table_name} VALUES {data}"\
                 .format(schema_name=schema_name, table_name=table_name, data=data_to_insert)
             self.execute_sql_on_trino(sql=sql_statement, conn=conn)
-
-            percent_start = int((start / data.shape[0]) *100)
-            percent_complete = int((end / data.shape[0]) * 100) if end < data.shape[0] else 100
-            if percent_complete != percent_start:
-                self.print_progress_bar(percent_complete)
-
-
-    def print_progress_bar(self, percent):
-        import sys
-        from time import sleep
-        bar_length = 50
-
-        sys.stdout.write('\r')
-        sys.stdout.write("Completed: [{:{}}] {:>3}%"
-                         .format('='*int(percent/(100.0/bar_length)),
-                                 bar_length, int(percent)))
-        sys.stdout.flush()
-        sleep(0.002)
-
 
     def download_file(self, file_path: str) -> None:
         import boto3
@@ -204,105 +183,6 @@ class GenericPlugin(EmptyPlugin):
                 s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
                                 ).objects.filter(Prefix=obj.key).delete()
 
-    def extract_data(self, file, delimiter):
-        """Extracted Epoch-by-Epoch Data from the Actiwatch data"""
-
-        import pyActigraphy
-        import pandas as pd
-        import numpy as np
-
-        extracted_data = []
-
-        # Read the actiwatch file
-        raw = pyActigraphy.io.read_raw_rpx(file, delimiter=delimiter, drop_na=False)
-
-        # Extract datetime and 'Activity' column
-        data = raw.data.to_frame()
-
-        extracted_data.append(data)
-
-        # Extract all available light channels
-        # Possible channels:
-        # - White Light,
-        # - Red Light,
-        # - Green Light,
-        # - Blue Light
-
-        if raw.light is not None:
-            channels = raw.light.get_channel_list()
-            light_channels = raw.light.get_channels()
-
-            # Original data for 'White Light' are during extraction transformed with
-            # log10(x+1), perform inverse function to extract and preserve the original data
-
-            if 'White Light' in channels:
-                light_channels['White Light'] = \
-                    light_channels['White Light'].apply(lambda x: np.power(10, x) - 1)
-            extracted_data.append(round(light_channels, 2))
-
-        # Extract 'Sleep/Wake'
-        sleep_wake = raw.sleep_wake
-        if sleep_wake is not None:
-            extracted_data.append(sleep_wake.to_frame())
-
-        # Extract 'Interval Status'
-        interval_status = raw.interval_status
-        if interval_status is not None:
-            extracted_data.append(interval_status.to_frame())
-
-        data_to_upload = [df for df in extracted_data if df is not None]
-
-        final_actigraphy_data = pd.concat(data_to_upload, axis=1)
-
-        return final_actigraphy_data
-
-    def extract_rpx_header_info(self, fname):
-        """Extract file header and data header"""
-
-        header = []
-
-        with open(fname, mode='rb') as file:
-            data = file.readlines()
-        for header_offset, line in enumerate(data, 1):
-            if 'Epoch-by-Epoch Data' in line.decode('utf-8'):
-                break
-            else:
-                header.append(line.decode('utf-8'))
-
-        return header
-
-    def extract_identity(self, header, identity='Identity', delimiter=','):
-        import re
-
-        name = ""
-        for line in header:
-            if identity in line:
-                name = re.sub(r'[^\w\s]', '', line.split(delimiter)[1]).strip()
-                break
-        return name
-
-    def extract_full_name(self, header, identity='Full Name', delimiter=','):
-        import re
-
-        name = ""
-        for line in header:
-            if identity in line:
-                name = re.sub(r'[^\w\s]', '', line.split(delimiter)[1]).strip()
-                break
-        return name
-
-    def extract_date_of_birth(self, header, date_of_birth='Date of Birth', delimiter=","):
-        import re
-        import pandas as pd
-
-        birth_date = ""
-        for line in header:
-            if date_of_birth in line:
-                date_of_birth = re.sub(r'[^\d./]+', '', line.split(delimiter)[1])
-                break
-        if birth_date:
-            birth_date = (pd.to_datetime(date_of_birth, dayfirst=True)).strftime("%d-%m-%Y")
-        return birth_date
 
     def generate_personal_id(self, personal_data):
         """Based on the identity, full_name and date of birth."""
@@ -318,33 +198,7 @@ class GenericPlugin(EmptyPlugin):
         id = hashlib.sha256(bytes(personal_id, "utf-8")).hexdigest()
         return id
 
-    def generate_subject_personal_id(self, file, delimiter):
-        """
-        Extract subject properties and based on extracted name, date of birth and
-        identity generate a unique ID.
-        """
-        # Extract header
-        header = self.extract_rpx_header_info(file)
-
-        # From header extract full name
-        full_name = self.extract_full_name(header=header, delimiter=delimiter)
-
-        # From header extract identity
-        identity = self.extract_identity(header=header, delimiter=delimiter)
-
-        # From header extract date of birth
-        date_of_birth = self.extract_date_of_birth(header=header, delimiter=delimiter)
-
-        # Generate personal id
-        if full_name == "" or date_of_birth == "" or identity == "":
-            personal_data = []
-        else:
-            personal_data = [full_name, date_of_birth, identity]
-
-        pid = self.generate_personal_id(personal_data)
-        return pid
-
-    def upload_metadata_file(self, metadata_file_name, metadata_content):
+    def upload_file_on_cloud(self, file_name, file_content, type_of_file):
         """Upload metadata files to support FAIR templates"""
         from io import BytesIO
         import boto3
@@ -357,10 +211,76 @@ class GenericPlugin(EmptyPlugin):
                                        config=Config(signature_version='s3v4'),
                                        region_name=self.__OBJ_STORAGE_REGION__)
 
-        obj_name_metadata = f"metadata_files/{metadata_file_name}"
+
         s3_data_lake.Bucket(self.__OBJ_STORAGE_BUCKET__).upload_fileobj(
-            BytesIO(metadata_content), obj_name_metadata,
-            ExtraArgs={'ContentType': "text/json"})
+            BytesIO(file_content), file_name,
+            ExtraArgs={'ContentType': type_of_file})
+
+
+    def remove_subject_properties_info(self, path_to_file, delimiter):
+        """Remove all data from Subject properties section in the actiwatch actigraphy
+        files"""
+
+        # Read the file
+        with open(path_to_file, mode='rb') as file:
+            data = file.readlines()
+
+        subject_properties = False
+        for header_offset, line in enumerate(data, 1):
+            if 'Subject Properties' in line.decode('utf-8'):
+                subject_properties = True
+                break
+
+        # Read file until the next blank line
+        # First, skip blank line after section title
+
+        if subject_properties:
+            for data_offset, line in enumerate(data[header_offset+1:]):
+                line_clean = line.replace(b'\r\r\n', b'\r\n')
+                if line_clean == b'\r\n':
+                    break
+                else:
+                    line_clean = line_clean.decode('utf-8')
+                    split_data = [item for item in line_clean.split(delimiter)]
+                    key_to_replace = split_data[0]
+                    new_value = None
+                    modified_string = f'{key_to_replace}{delimiter}{new_value}\r\n'
+                    data[header_offset+1+data_offset] = modified_string.encode('utf-8')
+
+        return data
+
+    def remove_personal_data_from_header_info(self, data, delimiter):
+        """In case that there is personal information outside of the Subject properties
+        section remove those information also"""
+
+        key_words = ['name', 'identity', 'initials', 'street', 'address', 'city', 'state',
+                     'zip', 'country', 'phone', 'gender', 'birth','age', 'zone', 'latitude',
+                     'longitude', 'altitude', 'geolocation', 'location']
+
+        for header_offset, line in enumerate(data):
+            if 'Epoch-by-Epoch Data' in line.decode('utf-8'):
+                break
+            else:
+                line = line.decode('utf-8')
+                line_to_check = line.lower()
+                for keyword in key_words:
+                    if keyword in line_to_check:
+                        split_data = [item for item in line.split(delimiter)]
+                        key_to_replace = split_data[0]
+                        new_value = None
+                        modified_string = f'{key_to_replace}{delimiter}{new_value}\r\n'
+                        data[header_offset] = modified_string.encode('utf-8')
+                        break
+
+        return data
+
+    def anonymize_actigraphy_file(self, path_to_file, delimiter):
+        """Remove personal information from the uploaded actiwatch actigraphy file"""
+
+        data = self.remove_subject_properties_info(path_to_file, delimiter)
+        data = self.remove_personal_data_from_header_info(data, delimiter)
+
+        return data
 
     def action(self, input_meta: PluginExchangeMetadata = None) -> PluginActionResponse:
         """
@@ -371,6 +291,7 @@ class GenericPlugin(EmptyPlugin):
         import shutil
         import pandas as pd
         import csv
+        import pyActigraphy
 
         from trino.dbapi import connect
         from trino.auth import BasicAuthentication
@@ -407,10 +328,14 @@ class GenericPlugin(EmptyPlugin):
                 if os.path.isfile(path_to_file):
                     # Get the delimiter type
                     with open(path_to_file, mode='r') as file:
-                        data = file.read(100)
+                        data = file.read()
 
                     sniffer = csv.Sniffer()
                     delimiter = sniffer.sniff(data).delimiter
+
+                    # Check if the file is compatible with pyActigraphy
+                    raw = pyActigraphy.io.read_raw_rpx(path_to_file, delimiter=delimiter,
+                                                       drop_na=False)
 
                     # Extracting subject properties to create a PID
                     print("Extracting subject properties ...")
@@ -436,15 +361,17 @@ class GenericPlugin(EmptyPlugin):
 
                         personal_id = self.generate_personal_id(personal_data)
                     else:
-                        personal_id = self.generate_subject_personal_id(path_to_file,
-                                                                        delimiter)
+                        personal_data = []
+                        personal_id = self.generate_personal_id(personal_data)
 
                     # Extract data from the uploaded actigraphy
-                    print("Extracting data ...")
-                    actigraphy_data = self.extract_data(path_to_file, delimiter)
+                    print("Anonymization of data ...")
+                    actigraphy_data = self.anonymize_actigraphy_file(path_to_file,
+                                                                     delimiter)
 
                     # Insert personal id in the extracted data
-                    actigraphy_data.insert(0, "PID", personal_id)
+                    trino_metadata = {"PID": [personal_id]}
+                    trino_metadata_df = pd.DataFrame(data=trino_metadata)
 
                     # Source name of the original edf file
                     source_name = os.path.basename(path_to_file)
@@ -456,7 +383,7 @@ class GenericPlugin(EmptyPlugin):
                         metadata_file_name = None
 
                     # Transform data in suitable form for updating trino table
-                    data_transformed = self.transform_input_data(actigraphy_data,
+                    data_transformed = self.transform_input_data(trino_metadata_df,
                                                                  source_name,
                                                                  input_meta.data_info["workspace_id"],
                                                                  input_meta.data_info["MRN"],
@@ -466,10 +393,16 @@ class GenericPlugin(EmptyPlugin):
                     self.upload_data_local(path_to_file, personal_id)
                     self.upload_data_on_trino(schema_name, table_name, data_transformed,
                                               conn)
+                    obj_file_name_on_cloud = f"actigraphy_files/{source_name}"
+                    self.upload_file_on_cloud(obj_file_name_on_cloud,
+                                              b''.join(actigraphy_data),
+                                              "text/csv")
                     # Upload metadata file also
                     if input_meta.data_info["metadata_json_file"] is not None:
-                        self.upload_metadata_file(metadata_file_name,
-                                                  input_meta.data_info["metadata_json_file"])
+                        obj_name_metadata = f"metadata_files/{metadata_file_name}"
+                        self.upload_file_on_cloud(obj_name_metadata,
+                                                  input_meta.data_info["metadata_json_file"],
+                                                  "text/json")
 
             print("Processing of the actigraphy file is finished.")
 
