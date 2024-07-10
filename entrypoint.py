@@ -1,5 +1,5 @@
-from mescobrad_edge.plugins.actiwatch_actigraphy_plugin.models.plugin import EmptyPlugin,\
-      PluginActionResponse, PluginExchangeMetadata
+from mescobrad_edge.plugins.actiwatch_actigraphy_plugin.models.plugin import \
+    EmptyPlugin, PluginActionResponse, PluginExchangeMetadata
 
 class GenericPlugin(EmptyPlugin):
     def execute_sql_on_trino(self, sql, conn):
@@ -67,8 +67,10 @@ class GenericPlugin(EmptyPlugin):
             data_to_insert = ", ".join(data_list)
 
             # Insert data into the table
-            sql_statement = "INSERT INTO iceberg.{schema_name}.{table_name} VALUES {data}"\
-                .format(schema_name=schema_name, table_name=table_name, data=data_to_insert)
+            sql_statement = "INSERT INTO iceberg.{schema_name}.{table_name} \
+                VALUES {data}".format(schema_name=schema_name,
+                                      table_name=table_name,
+                                      data=data_to_insert)
             self.execute_sql_on_trino(sql=sql_statement, conn=conn)
 
     def download_file(self, file_path: str) -> None:
@@ -79,16 +81,18 @@ class GenericPlugin(EmptyPlugin):
 
         s3_local = boto3.resource('s3',
                                   endpoint_url=self.__OBJ_STORAGE_URL_LOCAL__,
-                                  aws_access_key_id=self.__OBJ_STORAGE_ACCESS_ID_LOCAL__,
-                                  aws_secret_access_key=self.__OBJ_STORAGE_ACCESS_SECRET_LOCAL__,
+                                  aws_access_key_id=\
+                                    self.__OBJ_STORAGE_ACCESS_ID_LOCAL__,
+                                  aws_secret_access_key=\
+                                    self.__OBJ_STORAGE_ACCESS_SECRET_LOCAL__,
                                   config=Config(signature_version='s3v4'),
                                   region_name=self.__OBJ_STORAGE_REGION__)
 
         bucket_local = s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__)
 
         # Existing non annonymized data in local MinIO bucket
-        obj_personal_data = bucket_local.objects.filter(Prefix="actigraphy_data_tmp/",
-                                                        Delimiter="/")
+        obj_personal_data = bucket_local.objects.filter(
+            Prefix="actigraphy_data_tmp/", Delimiter="/")
 
         # Files for anonymization
         files_to_anonymize = [obj.key for obj in obj_personal_data]
@@ -103,10 +107,11 @@ class GenericPlugin(EmptyPlugin):
                             ).download_file(file_name,
                                             path_download_file)
 
-            # In order to rename the original file in bucket we need to delete it and
-            # upload it again
+            # In order to rename the original file in bucket we need to delete
+            # it and upload it again
             s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__,
-                            "actigraphy_data_tmp/"+os.path.basename(file_name)).delete()
+                            "actigraphy_data_tmp/" + os.path.basename(
+                                file_name)).delete()
 
     def update_filename_pid_mapping(self, obj_name, personal_id, s3_local):
         import csv
@@ -120,7 +125,8 @@ class GenericPlugin(EmptyPlugin):
         obj_files = bucket_local.objects.filter(Prefix=folder, Delimiter="/")
 
         if (len(list(obj_files))) > 0:
-            existing_object = s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__, file_path)
+            existing_object = s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__,
+                                              file_path)
             existing_data = existing_object.get()["Body"].read().decode('utf-8')
             data_to_append = [obj_name, personal_id]
             existing_rows = list(csv.reader(io.StringIO(existing_data)))
@@ -150,8 +156,10 @@ class GenericPlugin(EmptyPlugin):
 
         s3_local = boto3.resource('s3',
                                   endpoint_url=self.__OBJ_STORAGE_URL_LOCAL__,
-                                  aws_access_key_id=self.__OBJ_STORAGE_ACCESS_ID_LOCAL__,
-                                  aws_secret_access_key=self.__OBJ_STORAGE_ACCESS_SECRET_LOCAL__,
+                                  aws_access_key_id=\
+                                    self.__OBJ_STORAGE_ACCESS_ID_LOCAL__,
+                                  aws_secret_access_key=\
+                                    self.__OBJ_STORAGE_ACCESS_SECRET_LOCAL__,
                                   config=Config(signature_version='s3v4'),
                                   region_name=self.__OBJ_STORAGE_REGION__)
 
@@ -169,15 +177,17 @@ class GenericPlugin(EmptyPlugin):
 
         s3_local = boto3.resource('s3',
                                   endpoint_url=self.__OBJ_STORAGE_URL_LOCAL__,
-                                  aws_access_key_id=self.__OBJ_STORAGE_ACCESS_ID_LOCAL__,
-                                  aws_secret_access_key=self.__OBJ_STORAGE_ACCESS_SECRET_LOCAL__,
+                                  aws_access_key_id=\
+                                    self.__OBJ_STORAGE_ACCESS_ID_LOCAL__,
+                                  aws_secret_access_key=\
+                                    self.__OBJ_STORAGE_ACCESS_SECRET_LOCAL__,
                                   config=Config(signature_version='s3v4'),
                                   region_name=self.__OBJ_STORAGE_REGION__)
 
         # Empty the tmp folder if the file is not processed successfully
-        objs = list(s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
-                                    ).objects.filter(Prefix="actigraphy_data_tmp/",
-                                                     Delimiter="/"))
+        objs = list(s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__).\
+                    objects.filter(Prefix="actigraphy_data_tmp/",
+                                   Delimiter="/"))
         if len(list(objs))>0:
             for obj in objs:
                 s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
@@ -206,8 +216,10 @@ class GenericPlugin(EmptyPlugin):
 
         s3_data_lake =  boto3.resource('s3',
                                        endpoint_url=self.__OBJ_STORAGE_URL__,
-                                       aws_access_key_id=self.__OBJ_STORAGE_ACCESS_ID__,
-                                       aws_secret_access_key=self.__OBJ_STORAGE_ACCESS_SECRET__,
+                                       aws_access_key_id=\
+                                        self.__OBJ_STORAGE_ACCESS_ID__,
+                                       aws_secret_access_key=\
+                                        self.__OBJ_STORAGE_ACCESS_SECRET__,
                                        config=Config(signature_version='s3v4'),
                                        region_name=self.__OBJ_STORAGE_REGION__)
 
@@ -218,8 +230,8 @@ class GenericPlugin(EmptyPlugin):
 
 
     def remove_subject_properties_info(self, path_to_file, delimiter):
-        """Remove all data from Subject properties section in the actiwatch actigraphy
-        files"""
+        """Remove all data from Subject properties section in the actiwatch
+        actigraphy files"""
 
         # Read the file
         with open(path_to_file, mode='rb') as file:
@@ -244,18 +256,21 @@ class GenericPlugin(EmptyPlugin):
                     split_data = [item for item in line_clean.split(delimiter)]
                     key_to_replace = split_data[0]
                     new_value = None
-                    modified_string = f'{key_to_replace}{delimiter}{new_value}\r\n'
-                    data[header_offset+1+data_offset] = modified_string.encode('utf-8')
+                    modified_string = \
+                        f'{key_to_replace}{delimiter}{new_value}\r\n'
+                    data[header_offset+1+data_offset] = \
+                        modified_string.encode('utf-8')
 
         return data
 
     def remove_personal_data_from_header_info(self, data, delimiter):
-        """In case that there is personal information outside of the Subject properties
-        section remove those information also"""
+        """In case that there is personal information outside of the Subject
+        properties section remove those information also"""
 
-        key_words = ['name', 'identity', 'initials', 'street', 'address', 'city', 'state',
-                     'zip', 'country', 'phone', 'gender', 'birth','age', 'zone', 'latitude',
-                     'longitude', 'altitude', 'geolocation', 'location']
+        key_words = ['name', 'identity', 'initials', 'street', 'address',
+                     'city', 'state', 'zip', 'country', 'phone', 'gender',
+                     'birth','age', 'zone', 'latitude', 'longitude', 'altitude',
+                     'geolocation', 'location']
 
         for header_offset, line in enumerate(data):
             if 'Epoch-by-Epoch Data' in line.decode('utf-8'):
@@ -268,21 +283,24 @@ class GenericPlugin(EmptyPlugin):
                         split_data = [item for item in line.split(delimiter)]
                         key_to_replace = split_data[0]
                         new_value = None
-                        modified_string = f'{key_to_replace}{delimiter}{new_value}\r\n'
+                        modified_string = \
+                            f'{key_to_replace}{delimiter}{new_value}\r\n'
                         data[header_offset] = modified_string.encode('utf-8')
                         break
 
         return data
 
     def anonymize_actigraphy_file(self, path_to_file, delimiter):
-        """Remove personal information from the uploaded actiwatch actigraphy file"""
+        """Remove personal information from the uploaded actiwatch actigraphy
+        file"""
 
         data = self.remove_subject_properties_info(path_to_file, delimiter)
         data = self.remove_personal_data_from_header_info(data, delimiter)
 
         return data
 
-    def action(self, input_meta: PluginExchangeMetadata = None) -> PluginActionResponse:
+    def action(self, input_meta: PluginExchangeMetadata = None) -> \
+        PluginActionResponse:
         """
         Extract epoch by epoch data from actiwatch actigraphy files.
         Upload extracted data into the trino table.
@@ -301,20 +319,22 @@ class GenericPlugin(EmptyPlugin):
             host=self.__TRINO_HOST__,
             port=self.__TRINO_PORT__,
             http_scheme="https",
-            auth=BasicAuthentication(self.__TRINO_USER__, self.__TRINO_PASSWORD__),
+            auth=BasicAuthentication(self.__TRINO_USER__,
+                                     self.__TRINO_PASSWORD__),
             max_attempts=1,
             request_timeout=600
         )
 
-        # Get the schema name, schema in Trino is an equivalent to a bucket in MinIO
-        # Trino doesn't allow to have "-" in schema name so it needs to be replaced
-        # with "_"
+        # Get the schema name, schema in Trino is an equivalent to a bucket in
+        # MinIO Trino doesn't allow to have "-" in schema name so it needs to be
+        # replaced with "_"
         schema_name = self.__OBJ_STORAGE_BUCKET__.replace("-", "_")
 
         # Get the table name
         table_name = self.__OBJ_STORAGE_TABLE__.replace("-", "_")
 
-        path_to_data = "mescobrad_edge/plugins/actiwatch_actigraphy_plugin/actigraphy_files/"
+        path_to_data = \
+            "mescobrad_edge/plugins/actiwatch_actigraphy_plugin/actigraphy_files/"
 
         # create temporary folder for storing downloaded files
         os.makedirs(path_to_data, exist_ok=True)
@@ -334,7 +354,8 @@ class GenericPlugin(EmptyPlugin):
                     delimiter = sniffer.sniff(data).delimiter
 
                     # Check if the file is compatible with pyActigraphy
-                    raw = pyActigraphy.io.read_raw_rpx(path_to_file, delimiter=delimiter,
+                    raw = pyActigraphy.io.read_raw_rpx(path_to_file,
+                                                       delimiter=delimiter,
                                                        drop_na=False)
 
                     # Extracting subject properties to create a PID
@@ -345,17 +366,18 @@ class GenericPlugin(EmptyPlugin):
                                                            data_info['date_of_birth'],
                                                            data_info['unique_id']]):
 
-                        # Make unified dates, so that different formats of date doesn't
-                        # change the final id
+                        # Make unified dates, so that different formats of date
+                        # doesn't change the final id
                         data_info["date_of_birth"] = pd.to_datetime(
                             data_info["date_of_birth"], dayfirst=True)
 
-                        data_info["date_of_birth"] = data_info["date_of_birth"].strftime(
-                            "%d-%m-%Y")
+                        data_info["date_of_birth"] =\
+                            data_info["date_of_birth"].strftime("%d-%m-%Y")
 
-                        # ID is created from the data: name, surname, date of birth and
-                        # national unique ID
-                        personal_data = [data_info['name'], data_info['surname'],
+                        # ID is created from the data: name, surname, date of
+                        # birth and national unique ID
+                        personal_data = [data_info['name'],
+                                         data_info['surname'],
                                          data_info['date_of_birth'],
                                          data_info['unique_id']]
 
@@ -366,8 +388,8 @@ class GenericPlugin(EmptyPlugin):
 
                     # Extract data from the uploaded actigraphy
                     print("Anonymization of data ...")
-                    actigraphy_data = self.anonymize_actigraphy_file(path_to_file,
-                                                                     delimiter)
+                    actigraphy_data = self.anonymize_actigraphy_file(
+                        path_to_file, delimiter)
 
                     # Insert personal id in the extracted data
                     trino_metadata = {"PID": [personal_id]}
@@ -378,28 +400,31 @@ class GenericPlugin(EmptyPlugin):
 
                     # Metadata file name
                     if input_meta.data_info["metadata_json_file"] is not None:
-                        metadata_file_name = os.path.splitext(source_name)[0] + ".json"
+                        metadata_file_name = \
+                            os.path.splitext(source_name)[0] + ".json"
                     else:
                         metadata_file_name = None
 
                     # Transform data in suitable form for updating trino table
-                    data_transformed = self.transform_input_data(trino_metadata_df,
-                                                                 source_name,
-                                                                 input_meta.data_info["workspace_id"],
-                                                                 input_meta.data_info["MRN"],
-                                                                 metadata_file_name)
+                    data_transformed = \
+                        self.transform_input_data(trino_metadata_df,
+                                                  source_name,
+                                                  input_meta.data_info["workspace_id"],
+                                                  input_meta.data_info["MRN"],
+                                                  metadata_file_name)
 
                     print("Uploading data ...")
                     self.upload_data_local(path_to_file, personal_id)
-                    self.upload_data_on_trino(schema_name, table_name, data_transformed,
-                                              conn)
+                    self.upload_data_on_trino(schema_name, table_name,
+                                              data_transformed, conn)
                     obj_file_name_on_cloud = f"actigraphy_files/{source_name}"
                     self.upload_file_on_cloud(obj_file_name_on_cloud,
                                               b''.join(actigraphy_data),
                                               "text/csv")
                     # Upload metadata file also
                     if input_meta.data_info["metadata_json_file"] is not None:
-                        obj_name_metadata = f"metadata_files/{metadata_file_name}"
+                        obj_name_metadata = \
+                            f"metadata_files/{metadata_file_name}"
                         self.upload_file_on_cloud(obj_name_metadata,
                                                   input_meta.data_info["metadata_json_file"],
                                                   "text/json")
