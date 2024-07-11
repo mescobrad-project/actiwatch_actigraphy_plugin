@@ -18,8 +18,11 @@ class GenericPlugin(EmptyPlugin):
         return rows
 
     def transform_input_data(self, data, source_name, workspace_id, MRN,
-                             metadata_file_name):
+                             metadata_file_name, startdate_time, enddate_time):
         """Transform input data into table suitable for creating query"""
+
+        data['startdate_time'] = startdate_time
+        data['enddate_time'] = enddate_time
 
         if MRN is not None:
             data["MRN"] = MRN
@@ -290,6 +293,47 @@ class GenericPlugin(EmptyPlugin):
 
         return data
 
+    def extract_metadata_information(self, data, delimiter):
+        """Extract Start date, Start Time, End date and End time from actigraphy
+        file."""
+        import re
+        import pandas as pd
+
+        start_time = []
+        end_time = []
+        for header_offset, line in enumerate(data):
+            if 'Epoch-by-Epoch Data' in line.decode('utf-8'):
+                break
+            else:
+                line = line.decode('utf-8')
+                line_to_check = line.lower()
+                if 'Data Collection Start Date'.lower() in line_to_check:
+                    start_time.append(re.sub(r'[^\d./]+', '',
+                                             line.split(delimiter)[1]))
+                elif 'Data Collection Start Time'.lower() in line_to_check:
+                    start_time.append(re.sub(r'[^\d.:AMP]+', '',
+                                             line.split(delimiter)[1]))
+                elif 'Data Collection End Date'.lower() in line_to_check:
+                    end_time.append(re.sub(r'[^\d./]+', '',
+                                           line.split(delimiter)[1]))
+                elif 'Data Collection End Time'.lower() in line_to_check:
+                    end_time.append(re.sub(r'[^\d.:AMP]+', '',
+                                           line.split(delimiter)[1]))
+
+        if start_time:
+            final_start_time = pd.to_datetime(' '.join(start_time),
+                                              dayfirst=True) # following pyactigraphy implementation
+        else:
+            final_start_time = None
+
+        if end_time:
+            final_end_time = pd.to_datetime(' '.join(end_time), dayfirst=True) # following pyactigraphy implementation
+        else:
+            final_end_time = None
+
+
+        return final_start_time, final_end_time
+
     def anonymize_actigraphy_file(self, path_to_file, delimiter):
         """Remove personal information from the uploaded actiwatch actigraphy
         file"""
@@ -391,6 +435,10 @@ class GenericPlugin(EmptyPlugin):
                     actigraphy_data = self.anonymize_actigraphy_file(
                         path_to_file, delimiter)
 
+                    startdate_time, enddate_time = \
+                        self.extract_metadata_information(actigraphy_data,
+                                                          delimiter)
+
                     # Insert personal id in the extracted data
                     trino_metadata = {"PID": [personal_id]}
                     trino_metadata_df = pd.DataFrame(data=trino_metadata)
@@ -411,7 +459,9 @@ class GenericPlugin(EmptyPlugin):
                                                   source_name,
                                                   input_meta.data_info["workspace_id"],
                                                   input_meta.data_info["MRN"],
-                                                  metadata_file_name)
+                                                  metadata_file_name,
+                                                  startdate_time,
+                                                  enddate_time)
 
                     print("Uploading data ...")
                     self.upload_data_local(path_to_file, personal_id)
