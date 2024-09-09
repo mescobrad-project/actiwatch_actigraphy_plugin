@@ -17,15 +17,15 @@ class GenericPlugin(EmptyPlugin):
         # Return the results
         return rows
 
-    def transform_input_data(self, data, source_name, workspace_id, MRN,
+    def transform_input_data(self, data, source_name, workspace_id, pseudoMRN,
                              metadata_file_name, startdate_time, enddate_time):
         """Transform input data into table suitable for creating query"""
 
         data['startdate_time'] = startdate_time
         data['enddate_time'] = enddate_time
 
-        if MRN is not None:
-            data["MRN"] = MRN
+
+        data["pseudoMRN"] = pseudoMRN
 
         if metadata_file_name is not None:
             data["metadata_file_name"] = metadata_file_name
@@ -116,7 +116,8 @@ class GenericPlugin(EmptyPlugin):
                             "actigraphy_data_tmp/" + os.path.basename(
                                 file_name)).delete()
 
-    def update_filename_pid_mapping(self, obj_name, personal_id, s3_local):
+    def update_filename_pid_mapping(self, obj_name, personal_id, pseudoMRN, mrn,
+                                    s3_local):
         import csv
         import io
 
@@ -131,23 +132,28 @@ class GenericPlugin(EmptyPlugin):
             existing_object = s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__,
                                               file_path)
             existing_data = existing_object.get()["Body"].read().decode('utf-8')
-            data_to_append = [obj_name, personal_id]
+            data_to_append = [obj_name, personal_id, pseudoMRN, mrn]
             existing_rows = list(csv.reader(io.StringIO(existing_data)))
             existing_rows.append(data_to_append)
+
+            # Update column names
+            column_names = ['filename', 'personal_id', 'pseudoMRN', 'MRN']
+            if any(col_name not in existing_rows[0] for col_name in column_names):
+                existing_rows[0] = column_names
 
             updated_data = io.StringIO()
             csv.writer(updated_data).writerows(existing_rows)
             s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__).upload_fileobj(
                 io.BytesIO(updated_data.getvalue().encode('utf-8')), file_path)
         else:
-            key_values = ['filename', 'personal_id']
-            file_data = [key_values, [obj_name, personal_id]]
+            key_values = ['filename', 'personal_id', 'pseudoMRN', 'MRN']
+            file_data = [key_values, [obj_name, personal_id, pseudoMRN, mrn]]
             updated_data = io.StringIO()
             csv.writer(updated_data).writerows(file_data)
             s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__).upload_fileobj(
                 io.BytesIO(updated_data.getvalue().encode('utf-8')), file_path)
 
-    def upload_data_local(self, path_to_file, personal_id):
+    def upload_data_local(self, path_to_file, personal_id, pseudoMRN, mrn):
         """Upload file local with inserted PID in the filename"""
 
         import boto3
@@ -171,7 +177,8 @@ class GenericPlugin(EmptyPlugin):
 
         # Update key value file with mapping between filename nad patient id,
         # this file is stored in the local MinIO instance
-        self.update_filename_pid_mapping(file_name, personal_id, s3_local)
+        self.update_filename_pid_mapping(file_name, personal_id, pseudoMRN, mrn,
+                                         s3_local)
 
 
     def remove_tmp_actigraphy_file(self):
@@ -334,6 +341,20 @@ class GenericPlugin(EmptyPlugin):
 
         return final_start_time, final_end_time
 
+    def calculate_pseudoMRN(self, mrn, workspace_id):
+        import hashlib
+
+        if mrn is None:
+            pseudoMRN = None
+        else:
+            personalMRN = [mrn, workspace_id]
+            personal_mrn = "".join(str(data) for data in personalMRN)
+
+            # Generate ID
+            pseudoMRN = hashlib.sha256(bytes(personal_mrn, "utf-8")).hexdigest()
+
+        return pseudoMRN
+
     def anonymize_actigraphy_file(self, path_to_file, delimiter):
         """Remove personal information from the uploaded actiwatch actigraphy
         file"""
@@ -453,18 +474,23 @@ class GenericPlugin(EmptyPlugin):
                     else:
                         metadata_file_name = None
 
+                    pseudoMRN = self.calculate_pseudoMRN(
+                        input_meta.data_info["MRN"],
+                        input_meta.data_info["workspace_id"])
+
                     # Transform data in suitable form for updating trino table
                     data_transformed = \
                         self.transform_input_data(trino_metadata_df,
                                                   source_name,
                                                   input_meta.data_info["workspace_id"],
-                                                  input_meta.data_info["MRN"],
+                                                  pseudoMRN,
                                                   metadata_file_name,
                                                   startdate_time,
                                                   enddate_time)
 
                     print("Uploading data ...")
-                    self.upload_data_local(path_to_file, personal_id)
+                    self.upload_data_local(path_to_file, personal_id, pseudoMRN,
+                                           input_meta.data_info["MRN"])
                     self.upload_data_on_trino(schema_name, table_name,
                                               data_transformed, conn)
                     obj_file_name_on_cloud = f"actigraphy_files/{source_name}"
