@@ -21,9 +21,8 @@ class GenericPlugin(EmptyPlugin):
                              metadata_file_name, startdate_time, enddate_time):
         """Transform input data into table suitable for creating query"""
 
-        data['startdate_time'] = startdate_time
-        data['enddate_time'] = enddate_time
-
+        data['startdate_time'] = str(startdate_time)
+        data['enddate_time'] = str(enddate_time)
 
         data["pseudoMRN"] = pseudoMRN
 
@@ -448,8 +447,7 @@ class GenericPlugin(EmptyPlugin):
 
                         personal_id = self.generate_personal_id(personal_data)
                     else:
-                        personal_data = []
-                        personal_id = self.generate_personal_id(personal_data)
+                        personal_id = None
 
                     # Extract data from the uploaded actigraphy
                     print("Anonymization of data ...")
