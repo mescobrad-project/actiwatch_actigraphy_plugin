@@ -75,11 +75,9 @@ class GenericPlugin(EmptyPlugin):
                                       data=data_to_insert)
             self.execute_sql_on_trino(sql=sql_statement, conn=conn)
 
-    def download_file(self, file_path: str) -> None:
+    def download_file(self, path_download_file: str, filename:str) -> None:
         import boto3
         from botocore.client import Config
-        import os
-        import time
 
         s3_local = boto3.resource('s3',
                                   endpoint_url=self.__OBJ_STORAGE_URL_LOCAL__,
@@ -90,30 +88,13 @@ class GenericPlugin(EmptyPlugin):
                                   config=Config(signature_version='s3v4'),
                                   region_name=self.__OBJ_STORAGE_REGION__)
 
-        bucket_local = s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__)
-
-        # Existing non annonymized data in local MinIO bucket
-        obj_personal_data = bucket_local.objects.filter(
-            Prefix="actigraphy_data_tmp/", Delimiter="/")
-
-        # Files for anonymization
-        files_to_anonymize = [obj.key for obj in obj_personal_data]
-
         # Download data which need to be anonymized
-        for file_name in files_to_anonymize:
-            ts = round(time.time()*1000)
-            basename, extension = os.path.splitext(os.path.basename(file_name))
-            path_download_file = f"{file_path}{basename}_{ts}{extension}"
+        s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
+                        ).download_file(filename, path_download_file)
 
-            s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
-                            ).download_file(file_name,
-                                            path_download_file)
-
-            # In order to rename the original file in bucket we need to delete
-            # it and upload it again
-            s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__,
-                            "actigraphy_data_tmp/" + os.path.basename(
-                                file_name)).delete()
+        # In order to rename the original file in bucket we need to delete
+        # it and upload it again
+        s3_local.Object(self.__OBJ_STORAGE_BUCKET_LOCAL__, filename).delete()
 
     def update_filename_pid_mapping(self, obj_name, personal_id, pseudoMRN, mrn,
                                     s3_local):
@@ -180,7 +161,7 @@ class GenericPlugin(EmptyPlugin):
                                          s3_local)
 
 
-    def remove_tmp_actigraphy_file(self):
+    def remove_tmp_actigraphy_file(self, file_path):
         import boto3
         from botocore.client import Config
 
@@ -193,15 +174,16 @@ class GenericPlugin(EmptyPlugin):
                                   config=Config(signature_version='s3v4'),
                                   region_name=self.__OBJ_STORAGE_REGION__)
 
-        # Empty the tmp folder if the file is not processed successfully
+        # Remove the file from the tmp folder if the file is not processed
+        # successfully
         objs = list(s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__).\
                     objects.filter(Prefix="actigraphy_data_tmp/",
                                    Delimiter="/"))
         if len(list(objs))>0:
             for obj in objs:
-                s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
-                                ).objects.filter(Prefix=obj.key).delete()
-
+                if obj.key in file_path:
+                    s3_local.Bucket(self.__OBJ_STORAGE_BUCKET_LOCAL__
+                                    ).objects.filter(Prefix=file_path).delete()
 
     def generate_personal_id(self, personal_data):
         """Based on the identity, full_name and date of birth."""
@@ -370,7 +352,6 @@ class GenericPlugin(EmptyPlugin):
         Upload extracted data into the trino table.
         """
         import os
-        import shutil
         import pandas as pd
         import csv
         import pyActigraphy
@@ -378,130 +359,132 @@ class GenericPlugin(EmptyPlugin):
         from trino.dbapi import connect
         from trino.auth import BasicAuthentication
 
-        # Initialize the connection with Trino
-        conn = connect(
-            host=self.__TRINO_HOST__,
-            port=self.__TRINO_PORT__,
-            http_scheme="https",
-            auth=BasicAuthentication(self.__TRINO_USER__,
-                                     self.__TRINO_PASSWORD__),
-            max_attempts=1,
-            request_timeout=600
-        )
-
-        # Get the schema name, schema in Trino is an equivalent to a bucket in
-        # MinIO Trino doesn't allow to have "-" in schema name so it needs to be
-        # replaced with "_"
-        schema_name = self.__OBJ_STORAGE_BUCKET__.replace("-", "_")
-
-        # Get the table name
-        table_name = self.__OBJ_STORAGE_TABLE__.replace("-", "_")
-
-        path_to_data = \
-            "mescobrad_edge/plugins/actiwatch_actigraphy_plugin/actigraphy_files/"
-
-        # create temporary folder for storing downloaded files
-        os.makedirs(path_to_data, exist_ok=True)
-
-        # Download data to process
-        self.download_file(path_to_data)
-
         try:
-            for file in os.listdir(path_to_data):
-                path_to_file = os.path.join(path_to_data, file)
-                if os.path.isfile(path_to_file):
-                    # Get the delimiter type
-                    with open(path_to_file, mode='r') as file:
-                        data = file.read()
+            # Initialize the connection with Trino
+            conn = connect(
+                host=self.__TRINO_HOST__,
+                port=self.__TRINO_PORT__,
+                http_scheme="https",
+                auth=BasicAuthentication(self.__TRINO_USER__,
+                                        self.__TRINO_PASSWORD__),
+                max_attempts=1,
+                request_timeout=600
+            )
 
-                    sniffer = csv.Sniffer()
-                    delimiter = sniffer.sniff(data).delimiter
+            # Get the schema name, schema in Trino is an equivalent to a bucket in
+            # MinIO Trino doesn't allow to have "-" in schema name so it needs to be
+            # replaced with "_"
+            schema_name = self.__OBJ_STORAGE_BUCKET__.replace("-", "_")
 
-                    # Check if the file is compatible with pyActigraphy
-                    raw = pyActigraphy.io.read_raw_rpx(path_to_file,
-                                                       delimiter=delimiter,
-                                                       drop_na=False)
+            # Get the table name
+            table_name = self.__OBJ_STORAGE_TABLE__.replace("-", "_")
 
-                    # Extracting subject properties to create a PID
-                    print("Extracting subject properties ...")
-                    data_info = input_meta.data_info
-                    if all(param is not None for param in [data_info['name'],
-                                                           data_info['surname'],
-                                                           data_info['date_of_birth'],
-                                                           data_info['unique_id']]):
+            path_to_data = \
+                "mescobrad_edge/plugins/actiwatch_actigraphy_plugin/actigraphy_files/"
 
-                        # Make unified dates, so that different formats of date
-                        # doesn't change the final id
-                        data_info["date_of_birth"] = pd.to_datetime(
-                            data_info["date_of_birth"], dayfirst=True)
+            # create temporary folder for storing downloaded files
+            os.makedirs(path_to_data, exist_ok=True)
 
-                        data_info["date_of_birth"] =\
-                            data_info["date_of_birth"].strftime("%d-%m-%Y")
+            basename = os.path.basename(input_meta.data_info['filename'])
+            path_processing_file = f"{path_to_data}{basename}"
 
-                        # ID is created from the data: name, surname, date of
-                        # birth and national unique ID
-                        personal_data = [data_info['name'],
-                                         data_info['surname'],
-                                         data_info['date_of_birth'],
-                                         data_info['unique_id']]
+            # Download data to process
+            self.download_file(path_processing_file,
+                               input_meta.data_info['filename'])
 
-                        personal_id = self.generate_personal_id(personal_data)
-                    else:
-                        personal_id = None
+            # Process file
+            if os.path.isfile(path_processing_file):
+                # Get the delimiter type
+                with open(path_processing_file, mode='r') as file:
+                    data = file.read()
 
-                    # Extract data from the uploaded actigraphy
-                    print("Anonymization of data ...")
-                    actigraphy_data = self.anonymize_actigraphy_file(
-                        path_to_file, delimiter)
+                sniffer = csv.Sniffer()
+                delimiter = sniffer.sniff(data).delimiter
 
-                    startdate_time, enddate_time = \
-                        self.extract_metadata_information(actigraphy_data,
-                                                          delimiter)
+                # Check if the file is compatible with pyActigraphy
+                raw = pyActigraphy.io.read_raw_rpx(path_processing_file,
+                                                    delimiter=delimiter,
+                                                    drop_na=False)
 
-                    # Insert personal id in the extracted data
-                    trino_metadata = {"PID": [personal_id]}
-                    trino_metadata_df = pd.DataFrame(data=trino_metadata)
+                # Extracting subject properties to create a PID
+                print("Extracting subject properties ...")
+                data_info = input_meta.data_info
+                if all(param is not None for param in [data_info['name'],
+                                                        data_info['surname'],
+                                                        data_info['date_of_birth'],
+                                                        data_info['unique_id']]):
 
-                    # Source name of the original edf file
-                    source_name = os.path.basename(path_to_file)
+                    # Make unified dates, so that different formats of date
+                    # doesn't change the final id
+                    data_info["date_of_birth"] = pd.to_datetime(
+                        data_info["date_of_birth"], dayfirst=True)
 
-                    # Metadata file name
-                    if input_meta.data_info["metadata_json_file"] is not None:
-                        metadata_file_name = \
-                            os.path.splitext(source_name)[0] + ".json"
-                    else:
-                        metadata_file_name = None
+                    data_info["date_of_birth"] =\
+                        data_info["date_of_birth"].strftime("%d-%m-%Y")
 
-                    pseudoMRN = self.calculate_pseudoMRN(
-                        input_meta.data_info["MRN"],
-                        input_meta.data_info["workspace_id"])
+                    # ID is created from the data: name, surname, date of
+                    # birth and national unique ID
+                    personal_data = [data_info['name'],
+                                        data_info['surname'],
+                                        data_info['date_of_birth'],
+                                        data_info['unique_id']]
 
-                    # Transform data in suitable form for updating trino table
-                    data_transformed = \
-                        self.transform_input_data(trino_metadata_df,
-                                                  source_name,
-                                                  input_meta.data_info["workspace_id"],
-                                                  pseudoMRN,
-                                                  metadata_file_name,
-                                                  startdate_time,
-                                                  enddate_time)
+                    personal_id = self.generate_personal_id(personal_data)
+                else:
+                    personal_id = None
 
-                    print("Uploading data ...")
-                    self.upload_data_local(path_to_file, personal_id, pseudoMRN,
-                                           input_meta.data_info["MRN"])
-                    self.upload_data_on_trino(schema_name, table_name,
-                                              data_transformed, conn)
-                    obj_file_name_on_cloud = f"actigraphy_files/{source_name}"
-                    self.upload_file_on_cloud(obj_file_name_on_cloud,
-                                              b''.join(actigraphy_data),
-                                              "text/csv")
-                    # Upload metadata file also
-                    if input_meta.data_info["metadata_json_file"] is not None:
-                        obj_name_metadata = \
-                            f"metadata_files/{metadata_file_name}"
-                        self.upload_file_on_cloud(obj_name_metadata,
-                                                  input_meta.data_info["metadata_json_file"],
-                                                  "text/json")
+                # Extract data from the uploaded actigraphy
+                print("Anonymization of data ...")
+                actigraphy_data = self.anonymize_actigraphy_file(
+                    path_processing_file, delimiter)
+
+                startdate_time, enddate_time = \
+                    self.extract_metadata_information(actigraphy_data,
+                                                      delimiter)
+
+                # Insert personal id in the extracted data
+                trino_metadata = {"PID": [personal_id]}
+                trino_metadata_df = pd.DataFrame(data=trino_metadata)
+
+                # Source name of the original actigraphy file
+                source_name = os.path.basename(path_processing_file)
+
+                # Metadata file name
+                if input_meta.data_info["metadata_json_file"] is not None:
+                    metadata_file_name = \
+                        os.path.splitext(source_name)[0] + ".json"
+                else:
+                    metadata_file_name = None
+
+                pseudoMRN = self.calculate_pseudoMRN(
+                    input_meta.data_info["MRN"],
+                    input_meta.data_info["workspace_id"])
+
+                # Transform data in suitable form for updating trino table
+                data_transformed = \
+                    self.transform_input_data(trino_metadata_df,
+                                              source_name,
+                                              input_meta.data_info["workspace_id"],
+                                              pseudoMRN,
+                                              metadata_file_name,
+                                              startdate_time,
+                                              enddate_time)
+
+                print("Uploading data ...")
+                self.upload_data_local(path_processing_file, personal_id,
+                                       pseudoMRN, input_meta.data_info["MRN"])
+                self.upload_data_on_trino(schema_name, table_name,
+                                          data_transformed, conn)
+                obj_file_name_on_cloud = f"actigraphy_files/{source_name}"
+                self.upload_file_on_cloud(obj_file_name_on_cloud,
+                                          b''.join(actigraphy_data), "text/csv")
+
+                # Upload metadata file also
+                if input_meta.data_info["metadata_json_file"] is not None:
+                    obj_name_metadata = f"metadata_files/{metadata_file_name}"
+                    self.upload_file_on_cloud(obj_name_metadata,
+                                              input_meta.data_info["metadata_json_file"],
+                                              "text/json")
 
             print("Processing of the actigraphy file is finished.")
 
@@ -509,10 +492,11 @@ class GenericPlugin(EmptyPlugin):
             print("Actigraphy processing failed with error: " + str(e))
 
         finally:
-            # Remove folder with downloaded files
-            shutil.rmtree(os.path.split(path_to_file)[0])
+            # Remove processed file
+            if os.path.exists(path_processing_file):
+                os.remove(path_processing_file)
 
             # Remove file in local bucket
-            self.remove_tmp_actigraphy_file()
+            self.remove_tmp_actigraphy_file(input_meta.data_info['filename'])
 
         return PluginActionResponse()
