@@ -325,7 +325,7 @@ class GenericPlugin(EmptyPlugin):
     def calculate_pseudoMRN(self, mrn, workspace_id):
         import hashlib
 
-        if mrn is None:
+        if mrn is None or workspace_id is None:
             pseudoMRN = None
         else:
             personalMRN = [mrn, workspace_id]
@@ -386,7 +386,15 @@ class GenericPlugin(EmptyPlugin):
             os.makedirs(path_to_data, exist_ok=True)
 
             basename = os.path.basename(input_meta.data_info['filename'])
-            path_processing_file = f"{path_to_data}{basename}"
+
+            pseudoMRN = self.calculate_pseudoMRN(
+                    input_meta.data_info["MRN"],
+                    input_meta.data_info["workspace_id"])
+
+            if pseudoMRN is not None:
+                path_processing_file = f"{path_to_data}{pseudoMRN}_{basename}"
+            else:
+                path_processing_file = f"{path_to_data}{basename}"
 
             # Download data to process
             self.download_file(path_processing_file,
@@ -403,16 +411,16 @@ class GenericPlugin(EmptyPlugin):
 
                 # Check if the file is compatible with pyActigraphy
                 raw = pyActigraphy.io.read_raw_rpx(path_processing_file,
-                                                    delimiter=delimiter,
-                                                    drop_na=False)
+                                                   delimiter=delimiter,
+                                                   drop_na=False)
 
                 # Extracting subject properties to create a PID
                 print("Extracting subject properties ...")
                 data_info = input_meta.data_info
                 if all(param is not None for param in [data_info['name'],
-                                                        data_info['surname'],
-                                                        data_info['date_of_birth'],
-                                                        data_info['unique_id']]):
+                                                       data_info['surname'],
+                                                       data_info['date_of_birth'],
+                                                       data_info['unique_id']]):
 
                     # Make unified dates, so that different formats of date
                     # doesn't change the final id
@@ -424,10 +432,9 @@ class GenericPlugin(EmptyPlugin):
 
                     # ID is created from the data: name, surname, date of
                     # birth and national unique ID
-                    personal_data = [data_info['name'],
-                                        data_info['surname'],
-                                        data_info['date_of_birth'],
-                                        data_info['unique_id']]
+                    personal_data = [data_info['name'], data_info['surname'],
+                                     data_info['date_of_birth'],
+                                     data_info['unique_id']]
 
                     personal_id = self.generate_personal_id(personal_data)
                 else:
@@ -455,10 +462,6 @@ class GenericPlugin(EmptyPlugin):
                         os.path.splitext(source_name)[0] + ".json"
                 else:
                     metadata_file_name = None
-
-                pseudoMRN = self.calculate_pseudoMRN(
-                    input_meta.data_info["MRN"],
-                    input_meta.data_info["workspace_id"])
 
                 # Transform data in suitable form for updating trino table
                 data_transformed = \
